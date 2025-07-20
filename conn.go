@@ -1261,7 +1261,7 @@ func dataErrorToStatus(err error) (code CodePair, msg string) {
 		if smtperr, ok := err.(*SMTPError); ok {
 			return CodePair{smtperr.Code, smtperr.EnhancedCode}, smtperr.Message
 		} else {
-			return CodePair{554, EnhancedCode{5, 0, 0}}, "Error: transaction failed: " + err.Error()
+			return CodeTransactionFailed, "Error: transaction failed: " + err.Error()
 		}
 	}
 	return CodeOk, "OK: queued"
@@ -1331,9 +1331,9 @@ func (c *Conn) writeResponseLines(codePair CodePair, lines ...string) {
 
 func (c *Conn) writeError(code CodePair, err error) {
 	if smtpErr, ok := err.(*SMTPError); ok {
-		c.writeResponse(CodePair{smtpErr.Code, smtpErr.EnhancedCode}, smtpErr.Message)
+		c.writeResponseLines(CodePair{smtpErr.Code, smtpErr.EnhancedCode}, smtpErr.Message)
 	} else {
-		c.writeResponse(code, err.Error())
+		c.writeResponseLines(code, err.Error())
 	}
 }
 

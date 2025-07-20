@@ -60,11 +60,12 @@ var (
 	CodeTooBusy              CodePair = CodePair{421, EnhancedCode{4, 4, 5}}
 	CodeActionAborted        CodePair = CodePair{451, EnhancedCode{4, 0, 0}}
 	CodeTooManyRcpts         CodePair = CodePair{452, EnhancedCode{4, 5, 3}}
-	CodeLineTooLong          CodePair = CodePair{500, EnhancedCode{5, 4, 0}}
-	CodeMsgTooBig            CodePair = CodePair{552, EnhancedCode{5, 3, 4}}
 	CodeIdleTimeout          CodePair = CodePair{421, EnhancedCode{4, 4, 2}}
 	CodeConnectionErr        CodePair = CodePair{421, EnhancedCode{4, 4, 0}}
+	CodeLineTooLong          CodePair = CodePair{500, EnhancedCode{5, 4, 0}}
 	CodeNegotiationCancelled CodePair = CodePair{501, EnhancedCode{5, 0, 0}}
+	CodeMsgTooBig            CodePair = CodePair{552, EnhancedCode{5, 3, 4}}
+	CodeTransactionFailed    CodePair = CodePair{554, EnhancedCode{5, 0, 0}}
 
 	CodeAuthSuccess   CodePair = CodePair{235, EnhancedCode{2, 7, 0}}
 	CodeAuthFail      CodePair = CodePair{454, EnhancedCode{4, 7, 0}}
