@@ -195,7 +195,7 @@ func (s *Server) handleConn(c *Conn) error {
 			}
 
 			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-				c.writeResponse(CodeIdleTimeout, "Idle timeout, bye bye")
+				c.writeResponse(CodeBadConnection, "Idle timeout, bye bye")
 				return nil
 			}
 

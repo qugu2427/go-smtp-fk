@@ -92,7 +92,7 @@ func (c *Conn) handle(cmd string, arg string) {
 	// and close connection.
 	defer func() {
 		if err := recover(); err != nil {
-			c.writeResponse(CodeInternalErr, "Internal server error")
+			c.writeResponse(CodeNotAvailable, "Internal server error")
 			c.Close()
 
 			stack := debug.Stack()
@@ -880,7 +880,7 @@ func (c *Conn) handleAuth(arg string) {
 
 		if encoded == "*" {
 			// https://tools.ietf.org/html/rfc4954#page-4
-			c.writeResponse(CodeNegotiationCancelled, "Negotiation cancelled")
+			c.writeResponse(CodePair{501, EnhancedCode{5, 0, 0}}, "Negotiation cancelled")
 			return
 		}
 
