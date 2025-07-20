@@ -29,6 +29,61 @@ var NoEnhancedCode = EnhancedCode{-1, -1, -1}
 // be used (X is derived from error code).
 var EnhancedCodeNotSet = EnhancedCode{0, 0, 0}
 
+// CodePair represents a combination of
+// a basic smtp code and an enhanced code.
+type CodePair struct {
+	Basic    int
+	Enhanced EnhancedCode
+}
+
+// Populates a generic enhanced code for code
+// pairs where enhanced code is not set.
+func (c *CodePair) populateEnhancedCode() {
+	if c.Enhanced == EnhancedCodeNotSet {
+		cat := c.Basic / 100
+		switch cat {
+		case 2, 4, 5:
+			c.Enhanced = EnhancedCode{cat, 0, 0}
+		default:
+			c.Enhanced = NoEnhancedCode
+		}
+	}
+}
+
+var (
+	CodeReady                CodePair = CodePair{220, NoEnhancedCode}
+	CodeBye                  CodePair = CodePair{221, EnhancedCode{2, 0, 0}}
+	CodeOk                   CodePair = CodePair{250, EnhancedCode{2, 0, 0}}
+	CodeCannotVerifyUser     CodePair = CodePair{252, EnhancedCode{2, 5, 0}}
+	CodeStartMail            CodePair = CodePair{354, NoEnhancedCode}
+	CodeInternalErr          CodePair = CodePair{421, EnhancedCode{4, 0, 0}}
+	CodeTooBusy              CodePair = CodePair{421, EnhancedCode{4, 4, 5}}
+	CodeActionAborted        CodePair = CodePair{451, EnhancedCode{4, 0, 0}}
+	CodeTooManyRcpts         CodePair = CodePair{452, EnhancedCode{4, 5, 3}}
+	CodeLineTooLong          CodePair = CodePair{500, EnhancedCode{5, 4, 0}}
+	CodeMsgTooBig            CodePair = CodePair{552, EnhancedCode{5, 3, 4}}
+	CodeIdleTimeout          CodePair = CodePair{421, EnhancedCode{4, 4, 2}}
+	CodeConnectionErr        CodePair = CodePair{421, EnhancedCode{4, 4, 0}}
+	CodeNegotiationCancelled CodePair = CodePair{501, EnhancedCode{5, 0, 0}}
+
+	CodeAuthSuccess   CodePair = CodePair{235, EnhancedCode{2, 7, 0}}
+	CodeAuthFail      CodePair = CodePair{454, EnhancedCode{4, 7, 0}}
+	CodeAuthChallenge CodePair = CodePair{334, NoEnhancedCode}
+
+	CodeInvalidCmd      CodePair = CodePair{500, EnhancedCode{5, 5, 1}}
+	CodeInvalidArg      CodePair = CodePair{501, EnhancedCode{5, 5, 4}}
+	CodeInvalidSequence CodePair = CodePair{503, EnhancedCode{5, 5, 1}}
+
+	CodeSyntaxErrCmd CodePair = CodePair{500, EnhancedCode{5, 5, 2}}
+	CodeSyntaxErrArg CodePair = CodePair{501, EnhancedCode{5, 5, 2}}
+
+	CodeNotImplementedCmd CodePair = CodePair{502, EnhancedCode{5, 5, 1}}
+	CodeNotImplementedArg CodePair = CodePair{504, EnhancedCode{5, 5, 4}}
+
+	CodeTlsRequired     CodePair = CodePair{523, EnhancedCode{5, 7, 10}}
+	CodeTlsHandshakeErr CodePair = CodePair{550, EnhancedCode{5, 0, 0}}
+)
+
 func (err *SMTPError) Error() string {
 	s := fmt.Sprintf("SMTP error %03d", err.Code)
 	if err.Message != "" {
@@ -42,8 +97,8 @@ func (err *SMTPError) Temporary() bool {
 }
 
 var ErrDataTooLarge = &SMTPError{
-	Code:         552,
-	EnhancedCode: EnhancedCode{5, 3, 4},
+	Code:         CodeMsgTooBig.Basic,
+	EnhancedCode: CodeMsgTooBig.Enhanced,
 	Message:      "Maximum message size exceeded",
 }
 

@@ -921,14 +921,14 @@ func TestServer_authParam(t *testing.T) {
 	// Invalid HEXCHAR
 	io.WriteString(c, "MAIL FROM: root@nsa.gov AUTH=<hey+A>\r\n")
 	scanner.Scan()
-	if !strings.HasPrefix(scanner.Text(), "500 ") {
+	if !strings.HasPrefix(scanner.Text(), "501 ") {
 		t.Fatal("Invalid MAIL response:", scanner.Text())
 	}
 
 	// Invalid HEXCHAR
 	io.WriteString(c, "MAIL FROM: root@nsa.gov AUTH=<he+YYa>\r\n")
 	scanner.Scan()
-	if !strings.HasPrefix(scanner.Text(), "500 ") {
+	if !strings.HasPrefix(scanner.Text(), "501 ") {
 		t.Fatal("Invalid MAIL response:", scanner.Text())
 	}
 

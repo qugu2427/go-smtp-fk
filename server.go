@@ -180,7 +180,7 @@ func (s *Server) handleConn(c *Conn) error {
 		if err == nil {
 			cmd, arg, err := parseCmd(line)
 			if err != nil {
-				c.protocolError(501, EnhancedCode{5, 5, 2}, "Bad command")
+				c.protocolError(CodeSyntaxErrCmd, "Bad command")
 				continue
 			}
 
@@ -190,16 +190,16 @@ func (s *Server) handleConn(c *Conn) error {
 				return nil
 			}
 			if err == ErrTooLongLine {
-				c.writeResponse(500, EnhancedCode{5, 4, 0}, "Too long line, closing connection")
+				c.writeResponse(CodeLineTooLong, "Too long line, closing connection")
 				return nil
 			}
 
 			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-				c.writeResponse(421, EnhancedCode{4, 4, 2}, "Idle timeout, bye bye")
+				c.writeResponse(CodeIdleTimeout, "Idle timeout, bye bye")
 				return nil
 			}
 
-			c.writeResponse(421, EnhancedCode{4, 4, 0}, "Connection error, sorry")
+			c.writeResponse(CodeConnectionErr, "Connection error, sorry")
 			return err
 		}
 	}

@@ -92,7 +92,7 @@ func (c *Conn) handle(cmd string, arg string) {
 	// and close connection.
 	defer func() {
 		if err := recover(); err != nil {
-			c.writeResponse(421, EnhancedCode{4, 0, 0}, "Internal server error")
+			c.writeResponse(CodeInternalErr, "Internal server error")
 			c.Close()
 
 			stack := debug.Stack()
@@ -101,7 +101,7 @@ func (c *Conn) handle(cmd string, arg string) {
 	}()
 
 	if cmd == "" {
-		c.protocolError(500, EnhancedCode{5, 5, 2}, "Error: bad syntax")
+		c.protocolError(CodeSyntaxErrCmd, "Error: bad syntax")
 		return
 	}
 
@@ -109,16 +109,16 @@ func (c *Conn) handle(cmd string, arg string) {
 	switch cmd {
 	case "SEND", "SOML", "SAML", "EXPN", "HELP", "TURN":
 		// These commands are not implemented in any state
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, fmt.Sprintf("%v command not implemented", cmd))
+		c.writeResponsef(CodeNotImplementedCmd, "%v command not implemented", cmd)
 	case "HELO", "EHLO", "LHLO":
 		lmtp := cmd == "LHLO"
 		enhanced := lmtp || cmd == "EHLO"
 		if c.server.LMTP && !lmtp {
-			c.writeResponse(500, EnhancedCode{5, 5, 1}, "This is a LMTP server, use LHLO")
+			c.writeResponse(CodeInvalidCmd, "This is a LMTP server, use LHLO")
 			return
 		}
 		if !c.server.LMTP && lmtp {
-			c.writeResponse(500, EnhancedCode{5, 5, 1}, "This is not a LMTP server")
+			c.writeResponse(CodeInvalidCmd, "This is not a LMTP server")
 			return
 		}
 		c.handleGreet(enhanced, arg)
@@ -127,18 +127,18 @@ func (c *Conn) handle(cmd string, arg string) {
 	case "RCPT":
 		c.handleRcpt(arg)
 	case "VRFY":
-		c.writeResponse(252, EnhancedCode{2, 5, 0}, "Cannot VRFY user, but will accept message")
+		c.writeResponse(CodeCannotVerifyUser, "Cannot VRFY user, but will accept message")
 	case "NOOP":
-		c.writeResponse(250, EnhancedCode{2, 0, 0}, "I have successfully done nothing")
+		c.writeResponse(CodeOk, "I have successfully done nothing")
 	case "RSET": // Reset session
 		c.reset()
-		c.writeResponse(250, EnhancedCode{2, 0, 0}, "Session reset")
+		c.writeResponse(CodeOk, "Session reset")
 	case "BDAT":
 		c.handleBdat(arg)
 	case "DATA":
 		c.handleData(arg)
 	case "QUIT":
-		c.writeResponse(221, EnhancedCode{2, 0, 0}, "Bye")
+		c.writeResponse(CodeBye, "Bye")
 		c.Close()
 	case "AUTH":
 		c.handleAuth(arg)
@@ -146,7 +146,7 @@ func (c *Conn) handle(cmd string, arg string) {
 		c.handleStartTLS()
 	default:
 		msg := fmt.Sprintf("Syntax errors, %v command unrecognized", cmd)
-		c.protocolError(500, EnhancedCode{5, 5, 2}, msg)
+		c.protocolError(CodeSyntaxErrCmd, msg)
 	}
 }
 
@@ -208,12 +208,12 @@ func (c *Conn) authAllowed() bool {
 
 // protocolError writes errors responses and closes the connection once too many
 // have occurred.
-func (c *Conn) protocolError(code int, ec EnhancedCode, msg string) {
-	c.writeResponse(code, ec, msg)
+func (c *Conn) protocolError(codePair CodePair, msg string) {
+	c.writeResponse(codePair, msg)
 
 	c.errCount++
 	if c.errCount > errThreshold {
-		c.writeResponse(500, EnhancedCode{5, 5, 1}, "Too many errors. Quiting now")
+		c.writeResponse(CodeInvalidCmd, "Too many errors. Quiting now")
 		c.Close()
 	}
 }
@@ -222,7 +222,7 @@ func (c *Conn) protocolError(code int, ec EnhancedCode, msg string) {
 func (c *Conn) handleGreet(enhanced bool, arg string) {
 	domain, err := parseHelloArgument(arg)
 	if err != nil {
-		c.writeResponse(501, EnhancedCode{5, 5, 2}, "Domain/address argument required for HELO")
+		c.writeResponse(CodeSyntaxErrArg, "Domain/address argument required for HELO")
 		return
 	}
 	// c.helo is populated before NewSession so
@@ -238,7 +238,7 @@ func (c *Conn) handleGreet(enhanced bool, arg string) {
 		sess, err := c.server.Backend.NewSession(c)
 		if err != nil {
 			c.helo = ""
-			c.writeError(451, EnhancedCode{4, 0, 0}, err)
+			c.writeError(CodeActionAborted, err)
 			return
 		}
 
@@ -246,7 +246,7 @@ func (c *Conn) handleGreet(enhanced bool, arg string) {
 	}
 
 	if !enhanced {
-		c.writeResponse(250, EnhancedCode{2, 0, 0}, fmt.Sprintf("Hello %s", domain))
+		c.writeResponsef(CodeOk, "Hello %s", domain)
 		return
 	}
 
@@ -311,35 +311,35 @@ func (c *Conn) handleGreet(enhanced bool, arg string) {
 
 	args := []string{"Hello " + domain}
 	args = append(args, caps...)
-	c.writeResponse(250, NoEnhancedCode, args...)
+	c.writeResponseLines(CodePair{CodeOk.Basic, NoEnhancedCode}, args...)
 }
 
 // READY state -> waiting for MAIL
 func (c *Conn) handleMail(arg string) {
 	if c.helo == "" {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "Please introduce yourself first.")
+		c.writeResponse(CodeInvalidSequence, "Please introduce yourself first.")
 		return
 	}
 	if c.bdatPipe != nil {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "MAIL not allowed during message transfer")
+		c.writeResponse(CodeInvalidSequence, "MAIL not allowed during message transfer")
 		return
 	}
 
 	arg, ok := cutPrefixFold(arg, "FROM:")
 	if !ok {
-		c.writeResponse(501, EnhancedCode{5, 5, 2}, "Was expecting MAIL arg syntax of FROM:<address>")
+		c.writeResponse(CodeSyntaxErrArg, "Was expecting MAIL arg syntax of FROM:<address>")
 		return
 	}
 
 	p := parser{s: strings.TrimSpace(arg)}
 	from, err := p.parseReversePath()
 	if err != nil {
-		c.writeResponse(501, EnhancedCode{5, 5, 2}, "Was expecting MAIL arg syntax of FROM:<address>")
+		c.writeResponse(CodeSyntaxErrArg, "Was expecting MAIL arg syntax of FROM:<address>")
 		return
 	}
 	args, err := parseArgs(p.s)
 	if err != nil {
-		c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unable to parse MAIL ESMTP parameters")
+		c.writeResponse(CodeInvalidArg, "Unable to parse MAIL ESMTP parameters")
 		return
 	}
 
@@ -353,25 +353,25 @@ func (c *Conn) handleMail(arg string) {
 		case "SIZE":
 			size, err := strconv.ParseUint(value, 10, 32)
 			if err != nil {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unable to parse SIZE as an integer")
+				c.writeResponse(CodeInvalidArg, "Unable to parse SIZE as an integer")
 				return
 			}
 
 			if c.server.MaxMessageBytes > 0 && int64(size) > c.server.MaxMessageBytes {
-				c.writeResponse(552, EnhancedCode{5, 3, 4}, "Max message size exceeded")
+				c.writeResponse(CodeMsgTooBig, "Max message size exceeded")
 				return
 			}
 
 			opts.Size = int64(size)
 		case "SMTPUTF8":
 			if !c.server.EnableSMTPUTF8 {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "SMTPUTF8 is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "SMTPUTF8 is not implemented")
 				return
 			}
 			opts.UTF8 = true
 		case "REQUIRETLS":
 			if !c.server.EnableREQUIRETLS {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "REQUIRETLS is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "REQUIRETLS is not implemented")
 				return
 			}
 			opts.RequireTLS = true
@@ -380,20 +380,20 @@ func (c *Conn) handleMail(arg string) {
 			switch BodyType(value) {
 			case BodyBinaryMIME:
 				if !c.server.EnableBINARYMIME {
-					c.writeResponse(504, EnhancedCode{5, 5, 4}, "BINARYMIME is not implemented")
+					c.writeResponse(CodeNotImplementedArg, "BINARYMIME is not implemented")
 					return
 				}
 				c.binarymime = true
 			case Body7Bit, Body8BitMIME:
 				// This space is intentionally left blank
 			default:
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unknown BODY value")
+				c.writeResponse(CodeInvalidArg, "Unknown BODY value")
 				return
 			}
 			opts.Body = BodyType(value)
 		case "RET":
 			if !c.server.EnableDSN {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "RET is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "RET is not implemented")
 				return
 			}
 			value = strings.ToUpper(value)
@@ -401,25 +401,25 @@ func (c *Conn) handleMail(arg string) {
 			case DSNReturnFull, DSNReturnHeaders:
 				// This space is intentionally left blank
 			default:
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unknown RET value")
+				c.writeResponse(CodeInvalidArg, "Unknown RET value")
 				return
 			}
 			opts.Return = DSNReturn(value)
 		case "ENVID":
 			if !c.server.EnableDSN {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "ENVID is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "ENVID is not implemented")
 				return
 			}
 			value, err := decodeXtext(value)
 			if err != nil || value == "" || !isPrintableASCII(value) {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed ENVID parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed ENVID parameter value")
 				return
 			}
 			opts.EnvelopeID = value
 		case "AUTH":
 			value, err := decodeXtext(value)
 			if err != nil || value == "" {
-				c.writeResponse(500, EnhancedCode{5, 5, 4}, "Malformed AUTH parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed AUTH parameter value")
 				return
 			}
 			if value == "<>" {
@@ -428,23 +428,23 @@ func (c *Conn) handleMail(arg string) {
 				p := parser{s: value}
 				value, err = p.parseMailbox()
 				if err != nil || p.s != "" {
-					c.writeResponse(500, EnhancedCode{5, 5, 4}, "Malformed AUTH parameter mailbox")
+					c.writeResponse(CodeInvalidArg, "Malformed AUTH parameter mailbox")
 					return
 				}
 			}
 			opts.Auth = &value
 		default:
-			c.writeResponse(500, EnhancedCode{5, 5, 4}, "Unknown MAIL FROM argument")
+			c.writeResponse(CodeInvalidArg, "Unknown MAIL FROM argument")
 			return
 		}
 	}
 
 	if err := c.Session().Mail(from, opts); err != nil {
-		c.writeError(451, EnhancedCode{4, 0, 0}, err)
+		c.writeError(CodeActionAborted, err)
 		return
 	}
 
-	c.writeResponse(250, EnhancedCode{2, 0, 0}, fmt.Sprintf("Roger, accepting mail from <%v>", from))
+	c.writeResponsef(CodeOk, "Roger, accepting mail from <%v>", from)
 	c.fromReceived = true
 }
 
@@ -671,35 +671,35 @@ func isPrintableASCII(val string) bool {
 // MAIL state -> waiting for RCPTs followed by DATA
 func (c *Conn) handleRcpt(arg string) {
 	if !c.fromReceived {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "Missing MAIL FROM command.")
+		c.writeResponse(CodeInvalidSequence, "Missing MAIL FROM command.")
 		return
 	}
 	if c.bdatPipe != nil {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "RCPT not allowed during message transfer")
+		c.writeResponse(CodeInvalidSequence, "RCPT not allowed during message transfer")
 		return
 	}
 
 	arg, ok := cutPrefixFold(arg, "TO:")
 	if !ok {
-		c.writeResponse(501, EnhancedCode{5, 5, 2}, "Was expecting RCPT arg syntax of TO:<address>")
+		c.writeResponse(CodeSyntaxErrArg, "Was expecting RCPT arg syntax of TO:<address>")
 		return
 	}
 
 	p := parser{s: strings.TrimSpace(arg)}
 	recipient, err := p.parsePath()
 	if err != nil {
-		c.writeResponse(501, EnhancedCode{5, 5, 2}, "Was expecting RCPT arg syntax of TO:<address>")
+		c.writeResponse(CodeSyntaxErrArg, "Was expecting RCPT arg syntax of TO:<address>")
 		return
 	}
 
 	if c.server.MaxRecipients > 0 && len(c.recipients) >= c.server.MaxRecipients {
-		c.writeResponse(452, EnhancedCode{4, 5, 3}, fmt.Sprintf("Maximum limit of %v recipients reached", c.server.MaxRecipients))
+		c.writeResponsef(CodeTooManyRcpts, "Maximum limit of %v recipients reached", c.server.MaxRecipients)
 		return
 	}
 
 	args, err := parseArgs(p.s)
 	if err != nil {
-		c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unable to parse RCPT ESMTP parameters")
+		c.writeResponse(CodeInvalidArg, "Unable to parse RCPT ESMTP parameters")
 		return
 	}
 
@@ -709,7 +709,7 @@ func (c *Conn) handleRcpt(arg string) {
 		switch key {
 		case "NOTIFY":
 			if !c.server.EnableDSN {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "NOTIFY is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "NOTIFY is not implemented")
 				return
 			}
 			notify := []DSNNotify{}
@@ -717,78 +717,78 @@ func (c *Conn) handleRcpt(arg string) {
 				notify = append(notify, DSNNotify(strings.ToUpper(val)))
 			}
 			if err := checkNotifySet(notify); err != nil {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed NOTIFY parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed NOTIFY parameter value")
 				return
 			}
 			opts.Notify = notify
 		case "ORCPT":
 			if !c.server.EnableDSN {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "ORCPT is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "ORCPT is not implemented")
 				return
 			}
 			aType, aAddr, err := decodeTypedAddress(value)
 			if err != nil || aAddr == "" {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed ORCPT parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed ORCPT parameter value")
 				return
 			}
 			opts.OriginalRecipientType = aType
 			opts.OriginalRecipient = aAddr
 		case "RRVS":
 			if !c.server.EnableRRVS {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "RRVS is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "RRVS is not implemented")
 				return
 			}
 			value, _, _ = strings.Cut(value, ";") // discard the no-support action
 			rrvsTime, err := time.Parse(time.RFC3339, value)
 			if err != nil {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed RRVS parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed RRVS parameter value")
 				return
 			}
 			opts.RequireRecipientValidSince = rrvsTime
 		case "BY":
 			if !c.server.EnableDELIVERBY {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "DELIVERBY is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "DELIVERBY is not implemented")
 				return
 			}
 			deliverBy := parseDeliverByArgument(value)
 			if deliverBy == nil {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed BY parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed BY parameter value")
 				return
 			}
 			if c.server.MinimumDeliverByTime != 0 &&
 				deliverBy.Mode == DeliverByReturn &&
 				deliverBy.Time < c.server.MinimumDeliverByTime {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "BY parameter is below server minimum")
+				c.writeResponse(CodeInvalidArg, "BY parameter is below server minimum")
 				return
 			}
 			opts.DeliverBy = deliverBy
 		case "MT-PRIORITY":
 			if !c.server.EnableMTPRIORITY {
-				c.writeResponse(504, EnhancedCode{5, 5, 4}, "MT-PRIORITY is not implemented")
+				c.writeResponse(CodeNotImplementedArg, "MT-PRIORITY is not implemented")
 				return
 			}
 			mtPriority, err := strconv.Atoi(value)
 			if err != nil {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed MT-PRIORITY parameter value")
+				c.writeResponse(CodeInvalidArg, "Malformed MT-PRIORITY parameter value")
 				return
 			}
 			if mtPriority < -9 || mtPriority > 9 {
-				c.writeResponse(501, EnhancedCode{5, 5, 4}, "MT-PRIORITY is outside valid range")
+				c.writeResponse(CodeInvalidArg, "MT-PRIORITY is outside valid range")
 				return
 			}
 			opts.MTPriority = &mtPriority
 		default:
-			c.writeResponse(500, EnhancedCode{5, 5, 4}, "Unknown RCPT TO argument")
+			c.writeResponse(CodeInvalidArg, "Unknown RCPT TO argument")
 			return
 		}
 	}
 
 	if err := c.Session().Rcpt(recipient, opts); err != nil {
-		c.writeError(451, EnhancedCode{4, 0, 0}, err)
+		c.writeError(CodeActionAborted, err)
 		return
 	}
 	c.recipients = append(c.recipients, recipient)
-	c.writeResponse(250, EnhancedCode{2, 0, 0}, fmt.Sprintf("I'll make sure <%v> gets this", recipient))
+	c.writeResponsef(CodeOk, "I'll make sure <%v> gets this", recipient)
 }
 
 func checkNotifySet(values []DSNNotify) error {
@@ -817,22 +817,22 @@ func checkNotifySet(values []DSNNotify) error {
 
 func (c *Conn) handleAuth(arg string) {
 	if c.helo == "" {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "Please introduce yourself first.")
+		c.writeResponse(CodeInvalidSequence, "Please introduce yourself first.")
 		return
 	}
 	if c.didAuth {
-		c.writeResponse(503, EnhancedCode{5, 5, 1}, "Already authenticated")
+		c.writeResponse(CodeInvalidSequence, "Already authenticated")
 		return
 	}
 
 	parts := strings.Fields(arg)
 	if len(parts) == 0 {
-		c.writeResponse(502, EnhancedCode{5, 5, 4}, "Missing parameter")
+		c.writeResponse(CodeSyntaxErrArg, "Missing parameter")
 		return
 	}
 
 	if !c.authAllowed() {
-		c.writeResponse(523, EnhancedCode{5, 7, 10}, "TLS is required")
+		c.writeResponse(CodeTlsRequired, "TLS is required")
 		return
 	}
 
@@ -844,14 +844,14 @@ func (c *Conn) handleAuth(arg string) {
 		var err error
 		ir, err = decodeSASLResponse(parts[1])
 		if err != nil {
-			c.writeResponse(454, EnhancedCode{4, 7, 0}, "Invalid base64 data")
+			c.writeResponse(CodeAuthFail, "Invalid base64 data")
 			return
 		}
 	}
 
 	sasl, err := c.auth(mechanism)
 	if err != nil {
-		c.writeError(454, EnhancedCode{4, 7, 0}, err)
+		c.writeError(CodeActionAborted, err)
 		return
 	}
 
@@ -859,7 +859,7 @@ func (c *Conn) handleAuth(arg string) {
 	for {
 		challenge, done, err := sasl.Next(response)
 		if err != nil {
-			c.writeError(454, EnhancedCode{4, 7, 0}, err)
+			c.writeError(CodeActionAborted, err)
 			return
 		}
 
@@ -871,7 +871,7 @@ func (c *Conn) handleAuth(arg string) {
 		if len(challenge) > 0 {
 			encoded = base64.StdEncoding.EncodeToString(challenge)
 		}
-		c.writeResponse(334, NoEnhancedCode, encoded)
+		c.writeResponse(CodeAuthChallenge, encoded)
 
 		encoded, err = c.readLine()
 		if err != nil {
@@ -880,18 +880,18 @@ func (c *Conn) handleAuth(arg string) {
 
 		if encoded == "*" {
 			// https://tools.ietf.org/html/rfc4954#page-4
-			c.writeResponse(501, EnhancedCode{5, 0, 0}, "Negotiation cancelled")
+			c.writeResponse(CodeNegotiationCancelled, "Negotiation cancelled")
 			return
 		}
 
 		response, err = decodeSASLResponse(encoded)
 		if err != nil {
-			c.writeResponse(454, EnhancedCode{4, 7, 0}, "Invalid base64 data")
+			c.writeResponse(CodeAuthFail, "Invalid base64 data")
 			return
 		}
 	}
 
-	c.writeResponse(235, EnhancedCode{2, 0, 0}, "Authentication succeeded")
+	c.writeResponse(CodeAuthSuccess, "Authentication succeeded")
 	c.didAuth = true
 }
 
@@ -918,22 +918,22 @@ func (c *Conn) auth(mech string) (sasl.Server, error) {
 
 func (c *Conn) handleStartTLS() {
 	if _, isTLS := c.TLSConnectionState(); isTLS {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "Already running in TLS")
+		c.writeResponse(CodeNotImplementedCmd, "Already running in TLS")
 		return
 	}
 
 	if c.server.TLSConfig == nil {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "TLS not supported")
+		c.writeResponse(CodeNotImplementedCmd, "TLS not supported")
 		return
 	}
 
-	c.writeResponse(220, EnhancedCode{2, 0, 0}, "Ready to start TLS")
+	c.writeResponse(CodeReady, "Ready to start TLS")
 
 	// Upgrade to TLS
 	tlsConn := tls.Server(c.conn, c.server.TLSConfig)
 
 	if err := tlsConn.Handshake(); err != nil {
-		c.writeResponse(550, EnhancedCode{5, 0, 0}, "Handshake error")
+		c.writeResponse(CodeTlsHandshakeErr, "Handshake error")
 		return
 	}
 
@@ -956,25 +956,25 @@ func (c *Conn) handleStartTLS() {
 // DATA
 func (c *Conn) handleData(arg string) {
 	if arg != "" {
-		c.writeResponse(501, EnhancedCode{5, 5, 4}, "DATA command should not have any arguments")
+		c.writeResponse(CodeInvalidArg, "DATA command should not have any arguments")
 		return
 	}
 	if c.bdatPipe != nil {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "DATA not allowed during message transfer")
+		c.writeResponse(CodeInvalidSequence, "DATA not allowed during message transfer")
 		return
 	}
 	if c.binarymime {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "DATA not allowed for BINARYMIME messages")
+		c.writeResponse(CodeNotImplementedCmd, "DATA not allowed for BINARYMIME messages")
 		return
 	}
 
 	if !c.fromReceived || len(c.recipients) == 0 {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "Missing RCPT TO command.")
+		c.writeResponse(CodeInvalidSequence, "Missing RCPT TO command.")
 		return
 	}
 
 	// We have recipients, go to accept data
-	c.writeResponse(354, NoEnhancedCode, "Go ahead. End your data with <CR><LF>.<CR><LF>")
+	c.writeResponse(CodeStartMail, "Go ahead. End your data with <CR><LF>.<CR><LF>")
 
 	defer c.reset()
 
@@ -984,32 +984,32 @@ func (c *Conn) handleData(arg string) {
 	}
 
 	r := newDataReader(c)
-	code, enhancedCode, msg := dataErrorToStatus(c.Session().Data(r))
+	codePair, msg := dataErrorToStatus(c.Session().Data(r))
 	r.limited = false
 	io.Copy(ioutil.Discard, r) // Make sure all the data has been consumed
-	c.writeResponse(code, enhancedCode, msg)
+	c.writeResponseLines(codePair, msg)
 }
 
 func (c *Conn) handleBdat(arg string) {
 	args := strings.Fields(arg)
 	if len(args) == 0 {
-		c.writeResponse(501, EnhancedCode{5, 5, 4}, "Missing chunk size argument")
+		c.writeResponse(CodeInvalidArg, "Missing chunk size argument")
 		return
 	}
 	if len(args) > 2 {
-		c.writeResponse(501, EnhancedCode{5, 5, 4}, "Too many arguments")
+		c.writeResponse(CodeInvalidArg, "Too many arguments")
 		return
 	}
 
 	if !c.fromReceived || len(c.recipients) == 0 {
-		c.writeResponse(502, EnhancedCode{5, 5, 1}, "Missing RCPT TO command.")
+		c.writeResponse(CodeInvalidSequence, "Missing RCPT TO command.")
 		return
 	}
 
 	last := false
 	if len(args) == 2 {
 		if !strings.EqualFold(args[1], "LAST") {
-			c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unknown BDAT argument")
+			c.writeResponse(CodeInvalidArg, "Unknown BDAT argument")
 			return
 		}
 		last = true
@@ -1018,12 +1018,12 @@ func (c *Conn) handleBdat(arg string) {
 	// ParseUint instead of Atoi so we will not accept negative values.
 	size, err := strconv.ParseUint(args[0], 10, 32)
 	if err != nil {
-		c.writeResponse(501, EnhancedCode{5, 5, 4}, "Malformed size argument")
+		c.writeResponse(CodeInvalidArg, "Malformed size argument")
 		return
 	}
 
 	if c.server.MaxMessageBytes != 0 && c.bytesReceived+int64(size) > c.server.MaxMessageBytes {
-		c.writeResponse(552, EnhancedCode{5, 3, 4}, "Max message size exceeded")
+		c.writeResponse(CodeMsgTooBig, "Max message size exceeded")
 
 		// Discard chunk itself without passing it to backend.
 		io.Copy(ioutil.Discard, io.LimitReader(c.text.R, int64(size)))
@@ -1081,7 +1081,8 @@ func (c *Conn) handleBdat(arg string) {
 		// the whole chunk.
 		io.Copy(ioutil.Discard, chunk)
 
-		c.writeResponse(dataErrorToStatus(err))
+		codePair, msg := dataErrorToStatus(err)
+		c.writeResponseLines(codePair, msg)
 
 		if err == errPanic {
 			c.Close()
@@ -1104,11 +1105,12 @@ func (c *Conn) handleBdat(arg string) {
 		if c.server.LMTP {
 			c.bdatStatus.fillRemaining(err)
 			for i, rcpt := range c.recipients {
-				code, enchCode, msg := dataErrorToStatus(<-c.bdatStatus.status[i])
-				c.writeResponse(code, enchCode, "<"+rcpt+"> "+msg)
+				codePair, msg := dataErrorToStatus(<-c.bdatStatus.status[i])
+				c.writeResponseLines(codePair, "<"+rcpt+"> "+msg)
 			}
 		} else {
-			c.writeResponse(dataErrorToStatus(err))
+			codePair, msg := dataErrorToStatus(err)
+			c.writeResponseLines(codePair, msg)
 		}
 
 		if err == errPanic {
@@ -1118,7 +1120,7 @@ func (c *Conn) handleBdat(arg string) {
 
 		c.reset()
 	} else {
-		c.writeResponse(250, EnhancedCode{2, 0, 0}, "Continue")
+		c.writeResponse(CodeOk, "Continue")
 	}
 }
 
@@ -1243,8 +1245,8 @@ func (c *Conn) handleDataLMTP() {
 	}
 
 	for i, rcpt := range c.recipients {
-		code, enchCode, msg := dataErrorToStatus(<-status.status[i])
-		c.writeResponse(code, enchCode, "<"+rcpt+"> "+msg)
+		code, msg := dataErrorToStatus(<-status.status[i])
+		c.writeResponse(code, "<"+rcpt+"> "+msg)
 	}
 
 	// If done gets false, the panic occured in LMTPData and the connection
@@ -1254,20 +1256,19 @@ func (c *Conn) handleDataLMTP() {
 	}
 }
 
-func dataErrorToStatus(err error) (code int, enchCode EnhancedCode, msg string) {
+func dataErrorToStatus(err error) (code CodePair, msg string) {
 	if err != nil {
 		if smtperr, ok := err.(*SMTPError); ok {
-			return smtperr.Code, smtperr.EnhancedCode, smtperr.Message
+			return CodePair{smtperr.Code, smtperr.EnhancedCode}, smtperr.Message
 		} else {
-			return 554, EnhancedCode{5, 0, 0}, "Error: transaction failed: " + err.Error()
+			return CodePair{554, EnhancedCode{5, 0, 0}}, "Error: transaction failed: " + err.Error()
 		}
 	}
-
-	return 250, EnhancedCode{2, 0, 0}, "OK: queued"
+	return CodeOk, "OK: queued"
 }
 
 func (c *Conn) Reject() {
-	c.writeResponse(421, EnhancedCode{4, 4, 5}, "Too busy. Try again later.")
+	c.writeResponse(CodeTooBusy, "Too busy. Try again later.")
 	c.Close()
 }
 
@@ -1276,10 +1277,11 @@ func (c *Conn) greet() {
 	if c.server.LMTP {
 		protocol = "LMTP"
 	}
-	c.writeResponse(220, NoEnhancedCode, fmt.Sprintf("%v %s Service Ready", c.server.Domain, protocol))
+	c.writeResponsef(CodeReady, "%v %s Service Ready", c.server.Domain, protocol)
 }
 
-func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
+// Writes a single line response.
+func (c *Conn) writeResponse(codePair CodePair, line string) {
 	// TODO: error handling
 	if c.server.WriteTimeout != 0 {
 		c.conn.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
@@ -1287,35 +1289,51 @@ func (c *Conn) writeResponse(code int, enhCode EnhancedCode, text ...string) {
 
 	// All responses must include an enhanced code, if it is missing - use
 	// a generic code X.0.0.
-	if enhCode == EnhancedCodeNotSet {
-		cat := code / 100
-		switch cat {
-		case 2, 4, 5:
-			enhCode = EnhancedCode{cat, 0, 0}
-		default:
-			enhCode = NoEnhancedCode
-		}
-	}
+	codePair.populateEnhancedCode()
 
-	// transform each single line with \n, into separate lines
-	text = strings.Split(strings.Join(text, "\n"), "\n")
-
-	lastLineIndex := len(text) - 1
-	for i := 0; i < lastLineIndex; i++ {
-		c.text.PrintfLine("%d-%v", code, text[i])
-	}
-	if enhCode == NoEnhancedCode {
-		c.text.PrintfLine("%d %v", code, text[lastLineIndex])
+	if codePair.Enhanced == NoEnhancedCode {
+		c.text.PrintfLine("%d %v", codePair.Basic, line)
 	} else {
-		c.text.PrintfLine("%d %v.%v.%v %v", code, enhCode[0], enhCode[1], enhCode[2], text[lastLineIndex])
+		c.text.PrintfLine("%d %v.%v.%v %v", codePair.Basic, codePair.Enhanced[0], codePair.Enhanced[1], codePair.Enhanced[2], line)
 	}
 }
 
-func (c *Conn) writeError(code int, enhCode EnhancedCode, err error) {
-	if smtpErr, ok := err.(*SMTPError); ok {
-		c.writeResponse(smtpErr.Code, smtpErr.EnhancedCode, smtpErr.Message)
+func (c *Conn) writeResponsef(codePair CodePair, line string, args ...interface{}) {
+	c.writeResponse(codePair, fmt.Sprintf(line, args...))
+}
+
+// Writes a multiline response where
+// each index of lines - and each newline within
+// said index - is treated as a separate line.
+func (c *Conn) writeResponseLines(codePair CodePair, lines ...string) {
+	// TODO: error handling
+	if c.server.WriteTimeout != 0 {
+		c.conn.SetWriteDeadline(time.Now().Add(c.server.WriteTimeout))
+	}
+
+	// transform each single line with \n, into separate lines
+	lines = strings.Split(strings.Join(lines, "\n"), "\n")
+
+	// All responses must include an enhanced code, if it is missing - use
+	// a generic code X.0.0.
+	codePair.populateEnhancedCode()
+
+	lastLineIndex := len(lines) - 1
+	for i := 0; i < lastLineIndex; i++ {
+		c.text.PrintfLine("%d-%v", codePair.Basic, lines[i])
+	}
+	if codePair.Enhanced == NoEnhancedCode {
+		c.text.PrintfLine("%d %v", codePair.Basic, lines[lastLineIndex])
 	} else {
-		c.writeResponse(code, enhCode, err.Error())
+		c.text.PrintfLine("%d %v.%v.%v %v", codePair.Basic, codePair.Enhanced[0], codePair.Enhanced[1], codePair.Enhanced[2], lines[lastLineIndex])
+	}
+}
+
+func (c *Conn) writeError(code CodePair, err error) {
+	if smtpErr, ok := err.(*SMTPError); ok {
+		c.writeResponse(CodePair{smtpErr.Code, smtpErr.EnhancedCode}, smtpErr.Message)
+	} else {
+		c.writeResponse(code, err.Error())
 	}
 }
 
